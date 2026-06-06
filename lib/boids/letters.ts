@@ -18,7 +18,7 @@ const TOTAL_MS = FADE_IN_MS + SHOW_MS + DISINTEGRATE_MS;
 
 export type LettersHandle = {
   points: THREE.Points;
-  showText(text: string, nowMs: number): void;
+  showText(text: string, nowMs: number, color?: string): void;
   update(
     deltaSec: number,
     timeSec: number,
@@ -53,7 +53,7 @@ const frag = /* glsl */ `
   precision mediump float;
   uniform sampler2D uAtlas;
   uniform float uGlyphCount;
-  uniform vec3 uBone;
+  uniform vec3 uColor;
   varying float vGlyph;
   varying float vAlpha;
 
@@ -64,7 +64,7 @@ const frag = /* glsl */ `
     vec4 glyph = texture2D(uAtlas, uv);
     float alpha = glyph.a * vAlpha;
     if (alpha < 0.02) discard;
-    gl_FragColor = vec4(uBone, alpha);
+    gl_FragColor = vec4(uColor, alpha);
   }
 `;
 
@@ -98,7 +98,7 @@ export function createLetters(
       uGlyphCount: { value: LETTER_GLYPH_COUNT },
       uBounds: { value: new THREE.Vector2(bounds[0], bounds[1]) },
       uDpr: { value: dpr },
-      uBone: { value: new THREE.Color("#f5f3ee") },
+      uColor: { value: new THREE.Color("#f5f3ee") },
     },
     transparent: true,
     depthTest: false,
@@ -179,7 +179,8 @@ export function createLetters(
     setDpr(d) {
       material.uniforms.uDpr.value = d;
     },
-    showText(text, nowMs) {
+    showText(text, nowMs, color) {
+      if (color) material.uniforms.uColor.value.set(color);
       const placed = layout(text, boundsX, boundsY);
       const n = Math.min(placed.length, MAX_LETTERS);
       for (let i = 0; i < n; i++) {

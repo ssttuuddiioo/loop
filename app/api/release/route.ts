@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { push, since } from "@/lib/store";
+import { isValidHex, PALETTE } from "@/lib/palette";
 
 const RATE_MS = 10_000;
 const rate = new Map<string, number>();
@@ -37,14 +38,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "invalid" }, { status: 400 });
   }
 
+  const rawColor = (body as { color?: unknown })?.color;
+  const color = isValidHex(rawColor) ? rawColor : PALETTE[0].hex;
+
   rate.set(ip, now);
-  const item = push(text);
-  return NextResponse.json({ ok: true, id: item.id, ts: item.ts });
+  const item = await push(text, color);
+  return NextResponse.json({ ok: true, id: item.id, ts: item.ts, color });
 }
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const sinceParam = Number(searchParams.get("since") ?? "0");
   const cutoff = Number.isFinite(sinceParam) ? sinceParam : 0;
-  return NextResponse.json({ items: since(cutoff) });
+  return NextResponse.json({ items: await since(cutoff) });
 }

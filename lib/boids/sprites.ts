@@ -4,6 +4,7 @@ import { GLYPH_COUNT } from "./atlas";
 
 const vert = /* glsl */ `
   attribute float boidIndex;
+  attribute vec4 aColor;
   uniform sampler2D uPosition;
   uniform sampler2D uVelocity;
   uniform vec2 uBounds;
@@ -11,6 +12,7 @@ const vert = /* glsl */ `
   uniform float uDpr;
   varying float vDepth;
   varying float vGlyphIdx;
+  varying vec4 vColor;
 
   float hash11(float n) {
     return fract(sin(n * 12.9898) * 43758.5453);
@@ -40,6 +42,7 @@ const vert = /* glsl */ `
     }
     if (hash11(boidIndex + 37.0) > 0.965) idx = 7.0;
     vGlyphIdx = idx;
+    vColor = aColor;
 
     vec2 clip = pos / uBounds * 2.0 - 1.0;
     gl_Position = vec4(clip, 0.0, 1.0);
@@ -54,6 +57,7 @@ const frag = /* glsl */ `
   uniform vec3 uRoyal;
   varying float vDepth;
   varying float vGlyphIdx;
+  varying vec4 vColor;
 
   void main() {
     vec2 pc = gl_PointCoord;
@@ -62,7 +66,8 @@ const frag = /* glsl */ `
     vec4 glyph = texture2D(uGlyphAtlas, atlasUv);
 
     bool accent = vGlyphIdx > 6.5;
-    vec3 color = accent ? uRoyal : uBone;
+    // vColor.a > 0.5 marks a particle that has been "seeded" by a released word
+    vec3 color = vColor.a > 0.5 ? vColor.rgb : (accent ? uRoyal : uBone);
 
     float alpha = glyph.a * (0.45 + vDepth * 0.55);
     if (alpha < 0.02) discard;
@@ -79,9 +84,13 @@ export function createGlyphSprites(
   const geom = new THREE.BufferGeometry();
   const indices = new Float32Array(BOID_COUNT);
   const positions = new Float32Array(BOID_COUNT * 3);
+  // per-particle color: rgb + flag (a). a=0 → use default bone/royal; a=1 → custom.
+  const colors = new Float32Array(BOID_COUNT * 4); // all zero = unseeded
   for (let i = 0; i < BOID_COUNT; i++) indices[i] = i;
   geom.setAttribute("boidIndex", new THREE.BufferAttribute(indices, 1));
   geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  const colorAttr = new THREE.BufferAttribute(colors, 4);
+  geom.setAttribute("aColor", colorAttr);
 
   const material = new THREE.ShaderMaterial({
     vertexShader: vert,
@@ -103,5 +112,20 @@ export function createGlyphSprites(
 
   const points = new THREE.Points(geom, material);
   points.frustumCulled = false;
-  return { points, material };
+
+  // Recolor `count` random particles to rgb (each 0..1), persistently.
+  // Overwrites already-seeded particles too, so the flock keeps churning.
+  function recolor(count: number, rgb: [number, number, number]) {
+    const n = Math.max(0, Math.min(count, BOID_COUNT));
+    for (let k = 0; k < n; k++) {
+      const i = Math.floor(Math.random() * BOID_COUNT);
+      colors[i * 4] = rgb[0];
+      colors[i * 4 + 1] = rgb[1];
+      colors[i * 4 + 2] = rgb[2];
+      colors[i * 4 + 3] = 1; // flag = seeded
+    }
+    colorAttr.needsUpdate = true;
+  }
+
+  return { points, material, recolor };
 }

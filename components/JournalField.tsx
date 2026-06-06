@@ -1,13 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { pickRandom } from "@/lib/palette";
 
 type Phase = "field" | "thanks";
 
 export function JournalField() {
   const [text, setText] = useState("");
   const [phase, setPhase] = useState<Phase>("field");
+  const [color, setColor] = useState<string | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+
+  // Pick a palette color per load, client-side (avoids SSR hydration mismatch).
+  useEffect(() => {
+    setColor(pickRandom().hex);
+  }, []);
 
   useEffect(() => {
     if (phase === "field") taRef.current?.focus();
@@ -26,14 +33,14 @@ export function JournalField() {
     fetch("/api/release", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: value }),
+      body: JSON.stringify({ text: value, color }),
     }).catch(() => {});
     setPhase("thanks");
     window.setTimeout(() => {
       setText("");
       setPhase("field");
     }, 3000);
-  }, [text]);
+  }, [text, color]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -59,9 +66,10 @@ export function JournalField() {
           <div
             aria-hidden
             className="whitespace-pre-wrap break-words min-h-[1.5em]"
+            style={{ color: color ?? undefined }}
           >
             {text}
-            <span className="blink-cursor text-royal">█</span>
+            <span className="blink-cursor">█</span>
           </div>
           <textarea
             ref={taRef}
@@ -89,6 +97,7 @@ export function JournalField() {
           type="button"
           onClick={submit}
           disabled={!text.trim() || phase !== "field"}
+          style={text.trim() ? { color: color ?? undefined } : undefined}
           className="mt-5 text-sm sm:text-base text-royal hover:opacity-80 transition-opacity disabled:text-bone/25 disabled:cursor-default"
         >
           release ↵

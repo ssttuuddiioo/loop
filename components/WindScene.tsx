@@ -9,11 +9,21 @@ import { createGlyphAtlas } from "@/lib/boids/atlas";
 import { createGlyphSprites } from "@/lib/boids/sprites";
 import { createLetterAtlas } from "@/lib/boids/letterAtlas";
 import { createLetters } from "@/lib/boids/letters";
+import { hexToRgb01 } from "@/lib/palette";
+import { BOID_COUNT } from "@/lib/boids/shaders";
 
 const FRAME_MS = 1000 / 30;
 const POLL_MS = 2000;
+// A shown word starts dissolving ~1.6s after it appears (letters.ts: fade 600 + hold 1000).
+// We seed the flock with its color at that moment, so "text becomes particles" reads clearly.
+const RECOLOR_DELAY_MS = 1600;
+// Cap how much of the flock the week's history pre-seeds on load (leaves room for live churn).
+const SEED_CAP = Math.floor(BOID_COUNT * 0.6);
+// Approx particles each live release recolors (clamp(len,6,30) midpoint); used so a
+// reload re-seeds the flock to roughly the density the live dissolves would have built.
+const AVG_SEED_PER_RELEASE = 12;
 
-type Item = { id: string; text: string; ts: number };
+type Item = { id: string; text: string; color?: string; ts: number };
 
 export function WindScene() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -72,7 +82,9 @@ export function WindScene() {
     };
     window.addEventListener("resize", onResize);
 
-    const pending: string[] = [];
+    const pending: { text: string; color: string }[] = [];
+    // scheduled flock recolors: fire at `dueMs` so the seed coincides with dissolve
+    const recolorQueue: { dueMs: number; n: number; rgb: [number, number, number] }[] = [];
     let lastTs = Date.now();
     let cancelled = false;
 
@@ -86,7 +98,7 @@ export function WindScene() {
         if (cancelled || !data.items?.length) return;
         for (const it of data.items) {
           if (it.ts > lastTs) lastTs = it.ts;
-          pending.push(it.text);
+          pending.push({ text: it.text, color: it.color ?? "#f5f3ee" });
         }
       } catch {
         // ignore transient network errors
@@ -94,6 +106,28 @@ export function WindScene() {
     };
     poll();
     const pollId = window.setInterval(poll, POLL_MS);
+
+    // Pre-seed the flock from the week's history so accumulation survives reloads.
+    (async () => {
+      try {
+        const res = await fetch("/api/stats", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          counts?: Record<string, number>;
+          total?: number;
+        };
+        if (cancelled || !data.counts) return;
+        const total = data.total ?? 0;
+        if (total <= 0) return;
+        const budget = Math.min(SEED_CAP, total * AVG_SEED_PER_RELEASE);
+        for (const [hex, count] of Object.entries(data.counts)) {
+          const seed = Math.round((count / total) * budget);
+          if (seed > 0) sprites.recolor(seed, hexToRgb01(hex));
+        }
+      } catch {
+        // ignore
+      }
+    })();
 
     let raf = 0;
     let last = 0;
@@ -115,8 +149,23 @@ export function WindScene() {
       sim.compute(delta * 0.75, t, wind);
 
       if (pending.length && !letters.isBusy(now)) {
-        const text = pending.shift()!;
-        letters.showText(text, now);
+        const { text, color } = pending.shift()!;
+        letters.showText(text, now, color);
+        // seed the flock with this color as the word dissolves
+        const n = Math.max(6, Math.min(30, text.length));
+        recolorQueue.push({
+          dueMs: now + RECOLOR_DELAY_MS,
+          n,
+          rgb: hexToRgb01(color),
+        });
+      }
+      // fire any due flock recolors
+      for (let i = recolorQueue.length - 1; i >= 0; i--) {
+        if (now >= recolorQueue[i].dueMs) {
+          const r = recolorQueue[i];
+          sprites.recolor(r.n, r.rgb);
+          recolorQueue.splice(i, 1);
+        }
       }
       letters.update(delta, t, wind, now);
 
